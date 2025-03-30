@@ -1,0 +1,218 @@
+---
+title: Chapter 6. Coding with Streams
+sidebar_position: 6
+---
+
+Разглеждаме Streams в Node.js, те са основополагащи за много операции, които изпълняваме. Най-често те ни служат когато имаме нужда да обработим обем от данни, които надвишават капацитета ни от памет. Например, вместо да изчакаме един файл да бъде изцяло прочетен от файловата система и да го буферираме или казано по друг начин да го запазим в памет, и час след това да извършим операция с него, ние можем да го stream-нем. Тоест можем да прочетем файла на чънкове и да обработим всеки чънк по отделно. Този подход ни помога с няколко основни неща. Подобрява ефикасноста на ползването на памет. Вместо да четем един файл, който може да е мегабайти или гигибайти и да го буферираме, запълвайки нашата памет по този начин, ние ще прочетем файла на много по-малки чънкове. Според зависи от ситуацията в много случаи stream-ването на данни подобрява и бързината, с която се изпълняват определени операции. Трябва да имаме предвид, че това не винаги е така, ако вече имаме данните в паметта е много по-бързо просто да ги предадем. Парадоскалното е че в много случаи ние бихме използвали streams, защото искаме тази обработка да стане по-бавно, ще разгледаме по-късно концепцията за producer, consumer & backpressure. Последното предимство, което ще спомена е адаптивността, която ни дават, подобно на promises, streams имат един интерфейс, което прави chain-ването им много лесно и ни позволява да композираме pipelines, което улеснява обработката им.
+
+Имаме четири вида streams в JavaScript:
+- Readable - Използваме за да четем данни от източник
+- Writable - Използваме за да предаваме данни към консуматор (дестинация) 
+- Duplex - Readable & Writable, тоест микс
+- Transform - Специфичен duplex stream, който използваме за да трансформираме input stream и да го предадем като output
+Всички streams са подкласове на EventEmitter, тоест работим с тях, чрез евенти и имат два режима на работа Binary (default) & Object. Binary режима работи с буфери и чънкове от стрингове, а object режима работи с чънкове от всякакви JS стойности.
+
+---
+Започваме с Readable streams, както казахме, те се използват за да четем данни от източник. Можем да ги използваме в два режима - `non-flowing` и `flowing`, като по default режимът е `non-flowing`. Non-flowing или readable режимът ни дава повече контрол над stream-a, защото е на база pull, тоест ние изрично трябва да извикаме `.read()` метода за да получим данни. Ето пример:
+```js
+import { createReadStream } from "fs"
+
+const stream = createReadStream("./big-file")
+stream.on("readable", () => {
+	let chunk
+	while(chunk = stream.read() !== null){
+		console.log(chunk.toString())
+	}
+})
+
+stream.on("end", () => console.log("Finished"))
+```
+Виждаме няколко неща. Първо, че имаме предоставени функции за създаване на stream от някои библиотеки. Второ, че слушаме за `readable` евент, като очакваме да получим чънк `stream.read()`, ако чънкът е `null`, това означава, че сме приключили с данните в буфера. Трето имаме `end` евент, който финализира stream-a. Идеята тук е че ние можем експлицитно pull-ваме от потока в установено от нас темпо. 
+
+От другата страна имаме `flowing` режима, където данните се предават възможно най-бързо, тоест тука имаме push база. Той се активира, чисто и просто, чрез задачане на data listener. Ето така изглежда:
+```js
+import { createReadStream } from "fs"
+
+const stream = createReadStream("./big-file")
+stream.on("data", chunk => console.log(chunk.toString()))
+```
+Тук обаче ние се съобразяваме с темпото на подаване на данни, за това имаме механизми за установяване на backpressure или по-просто казано за задаване на темпо, чрез `.pause()` и `.resume()`
+```js
+import { createReadStream } from "fs"
+
+const stream = createReadStream("./big-file")
+stream.on("data", chunk => {
+	console.log(chunk.toString())
+	stream.pause()
+	setTimeout(() => stream.resume(), 1000)
+})
+```
+
+Най-актуалният начин да консумираме readables обаче е като async interators, по следният начин:
+```js
+import { createReadStream } from "fs"
+
+const stream = createReadStream("./big-file")
+for await (const chunk of stream){
+	console.log(chunk.toString())
+}
+```
+По този начин ние ще итерираме докато stream-a не приключи и backpressure-а се установява автоматично като всеки чънк се await-ва.
+
+Видяхме как се консумира readable, но също така трябва да знаем и как се имплментира:
+```js
+const { Readable } = require("stream")
+
+class ArrayStream extends Readable {
+	constructor(data, options) {
+		super(options)
+		this.data = data
+		this.index = 0
+	}
+
+	_read() {
+		if (this.index < this.data.length) {
+			const chunk = this.data[this.index++]
+			this.push(chunk)
+		} else {
+			this.push(null)
+		}
+	}
+}
+```
+Създаваме readable като extend-нем Readable class-а и имплементираме `_read(size)` метода, като `_read` реално ще бива извикан всеки път когато consumer-а извика `read`. Тоест идеята на метода е да събере данните, които трябва да предостави на потребителя и да извика `push`, който реално пуска данните в буфера. По принцип трябва да уважаваме, когато потребителя установ backpressure, ако сме стигнали лимита `this.push`, ще връне false, тогава трябва спрем да подаваме данни докато не получим `drain` евента, който ни казва, че буфера е консумиран и можем да продължим push-ванто на данни.
+
+---
+Writable streams от своя страна използваме за да подаваме данни. Writable са например `createWriteStream` и `ServerResponse`. Използваме writable stream, чрез `write` метода - `.write(chunk, encoding, callback)`, `.write()` буферира чънковете ако консуматора не може да се справи с тях и съответно връща false в такъв случай. Това означава, че трябва да паузираме stream-a и да изчакаме `drain` евента. Ако `.write()` върне true, това означава, че сме в рамките на `highWaterMark`-a. Имаме и `.end()` метод, който можем да използваме за да кажем, че stream-a приключва. Пример за използване на writable:
+```js
+import { once } from "events"
+
+const stream = new MyStream()
+for(let i = 0; i < 10; i++){
+	const waitDrain = !stream.write("hello")
+
+	if(waitDrain){
+		console.log("Wait drain!");
+		await once(stream, "drain");
+	}
+}
+```
+
+Ето така бихме имплементирали writable:
+```js
+import { Writable } from "stream"
+
+class MyStream extends Writable {
+	constructor() {
+		super({ highWaterMark: 10 })
+	}
+	
+	_write(data, encode, cb){
+		process.stdout.write(data.toString().toUpperCase() + "\n", cb)
+	}
+}
+```
+Подобно на readable-лите за да създадем writeable трябва да extend-нем Writable base class-a и съответно да имплементираме `_write`, този метод приема данните, encoding типа, например utf-8 за стрингове, и callback, който трябва да извикаме когато сме готови, ако имаме някакви грешки ги подаваме на callback-a.
+
+---
+Duplex stream-овете са както Readable, така и Writable. Тоест имат две страни, които са сравнително независими. Когато имплементираме Duplex трбява да имплементираме `_read` & `_write`. Има различни случаи, в които можем да се възползваме то такъв тип поток, в книгата е даден пример с TCP socket, който както може да предава данни, така и да приема. Имаме различни конфигурации, които можем да направим, например можем да специфицираме `objectMode` и за readable, и за writable.
+
+---
+Transform stream-овете са специфични duplex stream-ове, където всеки output chunk е трансформиран input chunk. Това е като филтър или мап за потоци. Transform stream-овете се нуждаят от имплементация на `_transform` метода - `_transform(chunk, encoding, callback)`. Този метод заменя `_read` & `_write`. Съответно можем и да имплементираме `_flush(callback)` метод, който има задължението да обработи оставащите данни към края на потока. Ето пример:
+```js
+import { Transform, Readable, Writable } from "stream"
+
+class UpperCaseTransform extends Transform {
+	_transform(chunk, encoding, callback) {
+		try {
+			const upperChunk = chunk.toString().toUpperCase()
+			this.push(upperChunk)
+			callback()
+		} catch (err) {
+			callback(err)
+		}
+	}
+}
+
+const readable = Readable.from([
+	"hello\n",
+	"this is a test\n",
+	"transform streaming\n"
+])
+
+const writable = new Writable({
+	write(chunk, encoding, callback) {
+		process.stdout.write(chunk)
+		callback()
+	}
+})
+
+const transform = new UpperCaseTransform()
+
+readable.pipe(transform).pipe(writable)
+```
+
+---
+ Време е да впрегнем stream-овете и да разгледаме какви pattern-и имаме. Започваме семпло като разглеждаме PassThrough Transform streams, те са transform streams, които нищо не правят върху данните, най-често се използват за мониторинг и като placeholder при някои pattern-и, като при Late Piping-a. При Late Piping-a имаме някакъв read stream, който трябва да обработим, но още не знам по какъв начин, за това използваме PassThrough за да можем да спечелим време и в последствие да закачим реалната дестинация. Следващото нещо, което трябва да разгледаме са така наречените lazy streams, които използваме когато трябва да създадем множество стриймове, но не сме сигурни кога биха се използвали:
+ ```js
+import lazystream from 'lazystream';
+const lazyURandom = new lazystream.Readable(() => {
+	return fs.createReadStream('/dev/urandom');
+});
+```
+Този стрийм няма да бъде "създаден" докато нещо не започне да го консумира.
+
+---
+В някои от примерите вече използвахме pipe, но трябва да разгледаме тази концепция отделно. Реално погледнато това е едно от големите feature на streams. Възможността да "пайпваме" потоци ни позволява да изграждаме модулярни pipeline-и, чрез които да трансформираме множество пъти един поток от данни да залагаме различни консуматори и т.н. Можем да вземем предишният пример където имаме readeable, transform, който трансформира стринговете в главни букви и writeable. Какво се случва? Имаме readable, който чете данните от масива, всеки чънк се предава на transform stream-a там се `извършва _transform` операцията и се подава на writable stream-a, който записва трансформираните данни. Има обаче един проблем с chain-ването на `.pipe` методи и това е, че error handling-a става почти невъзможен, грешките не се предават по веригата, това означава, че за всеки пайп ние трябва да error handle-ваме по отделно. Поради това, когато създаваме pipeline-и, най-добре е да използваме `pipeline` utility-то. Примерът от по-горе би изглеждал така.
+```js
+import { pipeline } from "stream";
+
+pipeline(
+	readable,
+	transform,
+	writable,
+	err => {
+		if (err) console.error('Pipeline failed:', err);
+		else console.log('Pipeline succeeded.');
+	}
+);
+```
+Вече имаме универаслен error handling за специфичният pipeline.
+
+---
+По принцип stream-овете имат последователна същност където чънковете се обработват един след друг и пазят своята последователност, но подобно на предишните глави има установени и design patterns свързам с паралелизъм, на кратко това се случва чрез предварително извикване на `done` callback-a и асинхронна обработка на чънка. Друг design pattern е композицията на stream-ове, видяхме, че можем да ги chain-ваме с `.pipe` или да парим pipeline-и с `pipeline()`, но ако имаме група от stream-ове, които често използваме заедно можем да ги "обединим" с цел по-голяма яснота. Това се случва, чрез библиотеки като `pumpify`. Пример:
+```js
+const composed = pumpify(
+	trasnform1,
+	transform2
+);
+
+pipeline(
+	readable,
+	composed,
+	writable
+	err => {
+		if (err) console.error('Pipeline failed:', err);
+		else console.log('Pipeline succeeded.');
+	}
+)
+```
+Следващият design patter e форкването на потоци или с други думи закачане на няколко консуматора към един източник, пример:
+```js
+const readable = fs.createReadStream('src.txt');
+readable.pipe(fs.createWriteStream('dist1.txt'));
+readable.pipe(fs.createWriteStream('dist1.txt'));
+```
+Този код ще вземе съдържанието от src и ще то запише в два отделни файла. Следващият design patter, който трябва да разгледаме е merge-ването на подоти. Това е обратното на форкването, имаме няколко източника и една дестинация. Пример:
+```js
+const writable = fs.createWriteStream('dist.txt')
+readable1.pipe(writable);
+readable2.pipe(writable);
+```
+Би било лесно да се подведем, че този код ще работи, но всъщност. Всъщност, първият readable, който приключи ще предизвика `.end()` и ще затвори writable stream-a. За това трябва да set-нем `{ end: false }` и да приключим writable stream-a по нашо осмутрение:
+```js
+const writable = fs.createWriteStream('dist.txt')
+readable1.pipe(writable, { end: false });
+readable2.pipe(writable, { end: false });
+```
+Има и една последна концепция, която трябва да се спомене. Това е multiplexing & demultiplexing на потоци. Реално не мога изобщо да обясня как става, на теория става въпрос за комбиниране на потоци, но не в смисъла на композиране или merge-ване, а буквално няколко потока се събират в един, като си запазват същността ......... но са един XD. Demultiplexing-a е обратният процес. 
