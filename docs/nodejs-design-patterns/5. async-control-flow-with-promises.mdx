@@ -4,48 +4,53 @@ sidebar_position: 5
 ---
 
 Колкото и полезни да са callback design pattern-ите, истината е, че в днешно време основният способ за справяне с асинхронен код е чрез така наречените Promises. Защо изобщо са се появили promises? Използването на callbacks, дори и след като сме запознати с установени design patterns, е неинтуитивно, лесно води до правене на грешки, особено от неоптни програмисти, callbacks не са специален способ за асинхронно програмиране, а обратно използването им а адаптация от страна на програмистите. Преди появана на promises общността прави различни опити да установи стандарт за справяне с асинхроннни операции, като плод на тези опити е Promises/A+ спецификацията, на която е базирана и имплементацията на JS promises или още познати като ES6 promises. Нека направим сравнение между callback style изпълнението на три поредни таска и promises, като и в давата случая ще напишем примерите по естествен начин, без да прилагаме сложни pattern-и:
+
 ```js
-firstTask(function(err, result) {
-	if(err){
-		console.log("Threw an error!")
-	} else {
-		secondTask(result, function(err, secondResult) {
-			if(err){
-				console.log("Threw an error!")
-			} else {
-				thirdTask(secondResult, function(err, thirdResult){
-					if(err){
-						// ...
-					} else {
-						// ...
-					}
-				})
-			}
-		})
-	}
-})
+firstTask(function (err, result) {
+  if (err) {
+    console.log("Threw an error!");
+  } else {
+    secondTask(result, function (err, secondResult) {
+      if (err) {
+        console.log("Threw an error!");
+      } else {
+        thirdTask(secondResult, function (err, thirdResult) {
+          if (err) {
+            // ...
+          } else {
+            // ...
+          }
+        });
+      }
+    });
+  }
+});
 ```
 
 ```js
 firstTask()
-	.then(res => secondTask(res))
-	.then(res => thirdTask(res))
-	.catch(err => console.log("Threw an error!"))
+  .then((res) => secondTask(res))
+  .then((res) => thirdTask(res))
+  .catch((err) => console.log("Threw an error!"));
 ```
+
 Веднага можем да видим грандиозната разлика в изписването на задачата, която искаме да изпълним.
 
 Вече, след като знам по какъв драстичен начин Promises подобравят developer experiencе-а ни, можем да ги поразгледаме в детайли. Каква е точната дефиниция на Promise? Това е обект, който представлява евентуалният резултат от една асинхронна операция, в началото, когато тя не е готова ние казваме, че promise-а е pending, ако е сполучлива, ние ще получим резултата и тогава казваме, че той е fulfilled, ако не е тогава ще получим причаната защо операцията е несполучлива под формата на ерор и тогава promise-a е rejected. Когато операцията е приключила, без значение дали е fulfilled или rejected, ни казваме, че promise-a e settled. Като програмисти ние най-често консумираме promises, но е много важно да знаем всъщност как се създават promises от началото. Това се случва чрез Promise конструктора. Нека дадем пример, като promisify-нем четенето от файл:
+
 ```js
 function readFilePromise(filename) {
   return new Promise((resolve, reject) => {
-    fs.readFile(filename, 'utf8', (err, data) => {
+    fs.readFile(filename, "utf8", (err, data) => {
       if (err) return reject(err);
       resolve(data);
     });
   });
 }
 ```
+
 Promise конструктура приема callback, на който ще бъдат подадени resolve & reject функции, които съответно ще отговарят за подаването на евентуалният резулта (данните от файла или ерор). Точно чрез тези функции ние можем да пропагираме резултата, което улеснява и error handling-a, който трябва да имплементираме. Когато един promise reject-не ние всъщност получаваме грешка, с която можем да се справим по елементарн начин чрез .catch метода. Трябва да споменем, че `.catch` е syntax sugar, който подобрява четимостта на default-ният начин за справяне с резултата, чрез `.then(onFulfill, onReject)`. Защо, обаче искаме да promisify-нем определена операция? Отговорът е, че искаме да имаме еднотипна и консистентна система за справяне с асинхронен код. Веднъж щом сме взели решението да работим с Promises, ние бихме искали повечето ни операции да са така наречените thenable, тоест да притежават then метода. Защо? Защото това ни позволява да chain-ваме операции, всеки Promise, връща друг promise. Пример:
+
 ```js
 readFilePromise("./data.json")
 	.then(data => {
@@ -57,95 +62,105 @@ readFilePromise("./data.json")
 ```
 
 Дадохме няколко примера с Promises, но така и не разгледахме API-то. Вече видяхме `.then` & `.catch` методите, но всъщност имаме и `finally` метод, който ще изпълни своят callback без значение от резултата на promise-a. Имаме и други интересни функционалности, които ни помагат да изпълняваме async операции паралелно (concurrently). Това са:
+
 - `Promise.resolve()`, който приема promise, thenable или стойност и създава нов promise, като ако подадем promise просто го връща, ако е thenable го конверира в promise & ако е стойност новият promise ще бъде fulfill-нат с тази стойност.
 - `Promise.reject()`, който просто приема ерор и създава promise, който ще го reject-не.
-- `Promise.all()`, `Promise.allSettled()`, `Promise.race()` приемат iterable обект, като всеки елемент в този iterable се изпълнява като promise паралелно. Разликите са, че при .all ако един promise reject-не, резултата ще е rejection-a, в противен случай е promise, който fulfill-ва масив от резултати, при .allSettled резултата ще е винаги масив с резултати и/или причини, а при .race винаги ще е резултатът от първата fulfill-ната операция.
-Точно използвайки тези методи можем да изпълняваме асинхронни операции паралелно. Пример:
+- `Promise.all()`, `Promise.allSettled()`, `Promise.race()` приемат iterable обект, като всеки елемент в този iterable се изпълнява като promise паралелно. Разликите са, че при .all ако един promise reject-не, резултата ще е rejection-a, в противен случай е promise, който fulfill-ва масив от резултати, при .allSettled резултата ще е винаги масив с резултати и/или причини, а при .race винаги ще е резултатът от първата settled-ната операция.
+  Точно използвайки тези методи можем да изпълняваме асинхронни операции паралелно. Пример:
+
 ```js
 const tasks = [task1, task2, task3];
-Promise
-	.all(tasks)
-	.then(results = console.log(results)) // [res1, res2, res3]
-	.catch(err => console.log("A task threw an error!"))
+Promise.all(tasks)
+  .then((results = console.log(results))) // [res1, res2, res3]
+  .catch((err) => console.log("A task threw an error!"));
 ```
-От към лимитирано паралелно изпълнение, можем просто да адаптираме TaskQueue-то от миналата глава. Нямаме специална вградена функционаност, която да ни помогне да лимитираме паралелността по много по-лесен начин. 
+
+От към лимитирано паралелно изпълнение, можем просто да адаптираме TaskQueue-то от миналата глава. Нямаме специална вградена функционаност, която да ни помогне да лимитираме паралелността по много по-лесен начин.
 
 След като видяхме колко по-интуитивно се работи с promises е време да улесним още повече нещата. Време е да разгледаме и async/await. Това е syntax sugar, който е изграден върху promises и ни позволява да пишем асинхронен код по синхронноизглеждащ начин, като идеята, е че можем да await-нем promise, тоест можем да получим резултата, не като друг promise, който fulfill-ва резултата, а директно него. Особеността обаче е че await може да се използва само във функции, които са специфицирани като async function. Как всъщност работи този syntax sugar, нека да дадем пример и да го обясним.
+
 ```js
 const myAsyncFn = async () => {
-	try {
-		const result1 = await task1();
-		const result2 = await task2(result1);
-		await task3(result2);
-	} catch (err) {
-		console.error("Caught error:", err);
-	}
-}
-myAsyncFn()
+  try {
+    const result1 = await task1();
+    const result2 = await task2(result1);
+    await task3(result2);
+  } catch (err) {
+    console.error("Caught error:", err);
+  }
+};
+myAsyncFn();
 ```
+
 Какво се случва реално? Започваме изпълнението на функцията, в момента в който срещнем `await task1();`, тя обаче спира или паузира изпълнението си и изчква този promise да бъде settled, в този момент тя възобновява изпълнението си, като това е възможно, защото контекстът на изпълнение просто е запазен. Това се случва при всяко await-ване на promise. Като интересното тук е че ако някой от тези promise reject-не той ще хвърли грешка, която ние можем да catch-нем чрез catch block-a. Виждаме, че първият пример е още по-интуитивен с async/await. Друго нещо, което можем да покажем и последователното изпълнение на таскове от масив.
+
 ```js
 const tasks = [task1, task2, task3];
-for(const task of tasks){
-	await task();
+for (const task of tasks) {
+  await task();
 }
 ```
+
 Това е, нямаме нужда от сложни pattern-и. Има обаче някои antipattern-и, за които трябва да внимаваме. Например изпъляването на "последователни" операции в методи на масиви, например:
+
 ```js
 const tasks = [task1, task2, task3];
-tasks.forEach(async (task) => await task())
+tasks.forEach(async (task) => await task());
 ```
+
 Това няма да има исканият от нас ефект. Вместо да изпълним тасковете един по един, ние ще ги пуснем паралелно, понеже всяка фунцкия тук е асинхронна и самостоятелна. Ако искаме да изпълним тасковете паралелно е най-добре да се придържаме към promise методите като all, allSettled и race.
 
 Последното нещо, което ще обсъдим е един concurrency pattern, който можем да имплементираме с promises & async/await, така нареченият Consumer/Producer pattern. Идеята е проста producers създават таскове и ги добавят в опашка, consumers взимат задачи от опашката и ги изпълняват, примерна имплементация би била:
+
 ```js
 class TaskQueue {
-	constructor(concurrency) {
-		this.tasks = [];
-		this.consumers = [];
+  constructor(concurrency) {
+    this.tasks = [];
+    this.consumers = [];
 
-		for (let i = 0; i < concurrency; i++) {
-			this.consume();
-		}
-	}
+    for (let i = 0; i < concurrency; i++) {
+      this.consume();
+    }
+  }
 
-	async consume() {
-		while (true) {
-			try {
-				const task = await this.getNextTask();
-				await task();
-			} catch (err) {
-				console.log("Task failed:", err);
-			}
-		}
-	}
+  async consume() {
+    while (true) {
+      try {
+        const task = await this.getNextTask();
+        await task();
+      } catch (err) {
+        console.log("Task failed:", err);
+      }
+    }
+  }
 
-	async getNextTask() {
-		return new Promise((resolve) => {
-			if (this.tasks.length > 0) {
-				resolve(this.tasks.shift());
-			} else {
-				this.consumers.push(resolve);
-			}
-		});
-	}
+  async getNextTask() {
+    return new Promise((resolve) => {
+      if (this.tasks.length > 0) {
+        resolve(this.tasks.shift());
+      } else {
+        this.consumers.push(resolve);
+      }
+    });
+  }
 
-	runTask(task) {
-		return new Promise((resolve, reject) => {
-			const taskWrapper = () => {
-				const taskPromise = task();
-				taskPromise.then(resolve, reject);
-				return taskPromise;
-			};
+  runTask(task) {
+    return new Promise((resolve, reject) => {
+      const taskWrapper = () => {
+        const taskPromise = task();
+        taskPromise.then(resolve, reject);
+        return taskPromise;
+      };
 
-			if (this.consumers.length > 0) {
-				const consumer = this.consumers.shift();
-				consumer(taskWrapper);
-			} else {
-				this.tasks.push(taskWrapper);
-			}
-		});
-	}
+      if (this.consumers.length > 0) {
+        const consumer = this.consumers.shift();
+        consumer(taskWrapper);
+      } else {
+        this.tasks.push(taskWrapper);
+      }
+    });
+  }
 }
 ```
+
 Така нека обясним какво се случва тук. Имаме TaskQueue, при нейното създаване, ние подаваме колко всъщност паралелни задачи искаме да можем да изпълняваме, тоест колко consumer-a искаме. След създаването на таск кюто, започваме да консумираме задачи , чрез consume метода, на пръв поглед виждаме един infinite loop, който след всяка изпълнена задача взима следващата и я изпълнява. Какво обаче се случва когато няма задачи за изпълнение? Разглеждаме getNextTask и виждаме, че връщаме нов promise, който прави едно от две неща ако имаме таск в кюто fulfill-ва таска, но ако няма той никога не fulfill-ва, той подава resolve callback-a в consumers кюто, тоест това е заспал consumer, по този начин `await this.getNextTask();` всъщност няма да бъде settled, докато не събудим consumer-a и той не изпълни нов таск. Това се случва в runTask, потребителя подава операция за изпълнение, ние я правим наша, като я обличаме в наш promise, който можем да следим и в последствие да консумираме, ако има заспал consumer, ние подаваме вече нашият promise и той бива изпълнен, ако няма го запазваме в task кюто,

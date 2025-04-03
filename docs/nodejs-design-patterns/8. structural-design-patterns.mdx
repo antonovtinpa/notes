@@ -1,0 +1,85 @@
+---
+title: Chapter 8. Structural Design Patterns
+sidebar_position: 8
+---
+
+Разглеждаме Structural Design Patterns. Това са решения, които ни помагат да променяме или подобряваме функционалността или интерфейса на един обект, без да променяме същността му. Тези pattern-и са свързани най-често с обгръщане на обектите в определени wrapper-и. Начина на имплементация на различините Structural Design Patterns е много подобен, но значението им е различно.
+
+Започваме с Proxy Pattern-a. Proxy-то ни е позната концепция от networking-a, знаем, че то служи като посредник за клиента, позволява му да комуникира с един сървър по анонимен начин, като всяка заявка се праща към proxy-то и от своя страна то я препраща към сървъра. Също имаме и reverse proxy-то, което е познатият ни load balancer, то изпълнява обратната роля, като позволява на сървъра да отговаря анонимно. Е Proxy Pattern-a се използва за подобна цел да бъде "медиатор" между потребителя и обекта, като основно бихме го използвали за access control, подобно на reverse proxy-то в networking-a. Реално когато proxify-нем един обект, ние запазваме неговият интерфейс, но можем да следим или адаптираме неговите дейстивия. Има различни начини да имплементираме Proxy Pattern-a, като да направим наш собствен wrapper (тоест да създадем наш обект със същият интерфейс, който да използва оригиналният обект в своите методи) или да имплементираме monkey-patching (директно да модифицираме методите на обекта, като ги обгръщаме с отделни wrapper-и), но в днешно време ние бихме използвали ES2015 Proxy класа. Пример с Proxy:
+
+```js
+function createObservable(target) {
+  return new Proxy(target, {
+    set(obj, prop, value, receiver) {
+      const prev = obj[prop];
+      if (value !== prev) {
+        obj[prop] = value;
+        console.log(`Property "${prop}" changed from ${prev} to ${value}`);
+      }
+      return true;
+    },
+  });
+}
+
+const person = { name: "Alice", age: 30 };
+
+const observedPerson = createObservable(person);
+
+observedPerson.age = 31;
+```
+
+Когато създаваме ново Proxy, ние трябва да подадем две неща - таргета на proxy-то и handlers. Handlers е обект с така наречените traps, това са определени методи, които отговарят на `internal operations`, като `[[GET]], [[SET]], [[DELETE]]` и дурги. Под отговарям имам предвид, че когато такава операция се извърши върху обект trap-a се trigger-ва. И в този случай сме установили trap за set операция, като целта е той да intercept-не пормяната на стойността да я промени, но и да ни уведоми за промяната. Всеки трап си и има signature, който може да се провери в документацията.
+
+Продължаваме с Decorator Pattern-a. Той има за цел да добави функционалност към един обект или да го модифицира, но без да променя интерфейса му. Класическите имплементации на декоратора се доближават до тези на Proxy-то, можем да композираме декорираният обект като го wrap-нев с нов или директно да манипулираме и добавяме неговите методи и пропертита. Реално погледнато, на практика можем да използваме Proxy-то за да декорираме един обект, но разликата се появява в теоритичната концепция. Пример:
+
+```js
+const decorateLogin = (obj) => {
+  obj.login = function () {
+    console.log(`${this.name} has logged in.`);
+  };
+  return obj;
+};
+
+const user = {
+  name: "Denis",
+  email: "denis@example.com",
+};
+user.login(); // Error: login is undefined
+
+decorateLogin(user);
+user.login(); // Denis has logged in.
+```
+
+Примерът е елементарен, но показва как декорираме един обект или как го подобряваме и разширяваме. Интерфейса на обекта остава непроменен, но е разширен.
+
+Последният structural pattern, който разглеждаме е Adapter Pattern-а. За разлика от предишните два неговата цел е да промени интерфейса на обекта, но да запази функционалността му. Този pattern е полезен когато имаме несъвместими компоненти, които трябва да разботят заедно, идеята е да адаптираме единият към очакванията на другият. Пример:
+
+```js
+class OldLogger {
+  logMessage(message) {
+    console.log(`Old Logger: ${message}`);
+  }
+}
+
+class Logger {
+  info(message) {
+    console.log(`Old Logger: ${message}`);
+  }
+}
+
+class AdaptedLogger extends Logger {
+  constructor() {
+    super();
+    this.old = new OldLogger();
+  }
+
+  info(message) {
+    this.old.logMessage(message);
+  }
+}
+
+const logger = new AdaptedLogger();
+logger.info("Actually calling oldLogger logMessage!");
+```
+
+Каква е идеята? Имаме логер със стар интерфейс, който вече не е подходящ, но все пак искам да го използваме. Решението е да адаптираме старият логер към новият интерфейс.

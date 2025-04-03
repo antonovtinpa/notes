@@ -1,0 +1,152 @@
+---
+title: Chapter 7. Creational Design Patterns
+sidebar_position: 7
+---
+
+Разглеждаме Creational Design Patterns. По самото наименувание можем да разберем, всъщност за какво ни помагат тези pattern-и, а то е за създаване на обекти в различни ситуации. По принцип тези pattern-и са установени от the GoF за други обектно ориентирани програмни езици, но в книгата се разглежда тяхната адаптация в Node.js.
+
+Започваме Factory Pattern-а, той ни помага да създаваме обекти чрез factory функция вместо чрез `new`. Защо това е полезно? Защото чрез тази функция ние можем динамично да избираме какъв клас да инстанциираме, тоест добавяме една абстракция над създаването на обекти, което прави избирането на клас за инстанцииране по-гъвкаво. Използвайки, factory реално енкапсулираме детайли по създаването на обекти. Пример:
+```js
+class ConsoleLogger {
+  log(message) {
+		console.log(message); 
+  }
+}
+class FileLogger {
+	constructor(filename) {
+		this.filename = filename;
+	}
+	log(message) {
+		// Write to file
+	}
+}
+
+function createLogger(type) {
+	if (type === 'file') {
+		return new FileLogger('app.log');
+	} else {
+		return new ConsoleLogger();
+	}
+}
+
+const logger = createLogger(process.env.LOG_TARGET);  // 'console' or 'file'
+logger.log('Hello World');
+```
+Това, което се случва в кода по-горе е, че на база use case, factory фукцията избира какъв логер да ни инстанциира. Съответно интерфейса на логерите трябва да съвпада за да има правилно използване. Както виждаме factory функцията се използва лесно и интуитивно, предоставя лесен АПИ, като добавя абстракция и освобождава потребителя от това да знае, кой точно клас се инстанциира. Съответно за по-прости програми понякога този pattern е ненужен, но това трябва да го прецени програмиста. Реален пример за използването на този patter e `http.createServer()`, това което се случва във функцията е инстанциирането `new Server()`.
+
+Builder pattern-a пък е средство за симплифициране на създаването на сложни обекти, чиито класове имат конструктори, които приемат множество аргументи. Builder-ите са удобни когато имаме да конфигурираме определена инстанция. Чрез този pattern ние можем да предоставим на потребителя, лесен и интутивен подход за конфигурация, като също така можем да валидираме дали сме получили нужните данни и накрая да му построим обкета, от който той се нуждае. Например:
+```js
+class UrlBuilder {
+	setProtocol(protocol) {
+		this.protocol = protocol;
+		return this;
+	}
+	setHost(host) {
+		this.host = host;
+		return this;
+	}
+	setPort(port) {
+		this.port = port;
+		return this;
+	}
+	setPath(path) {
+		this.path = path;
+		return this;
+	}
+	build() {
+		return new Url(this.protocol, this.host, this.port, this.path);
+	}
+}
+
+const url = new UrlBuilder()
+	.setProtocol('https')
+	.setHost('example.com')
+	.setPath('api/v1')
+	.setPort(443)
+	.build();
+```
+Чрез този builder class ние можем едно по едно да конфигурираме всички нужни данни за създаването на url, вместо да ги подаваме всички знаедо в сложен списък от аргументи. Използвайки този pattern, ние подобряваме яснотата на нашият код, чрез допълнителна валидация можем да избегнем невалидни данни и т.н., за сметка на това обаче пишем повече код и съответно имаме повече код за поддръжка. В JS всъщност builder pattern-a е много използван, например от библиотеки като express, knex, jQuery, superagent, axios, например:
+```js
+superagent
+	.post('https://api.example.com/data')
+	.send({ name: 'Alice' })
+	.set('Accept', 'application/json')
+	.then(res => console.log(res.body));
+```
+
+Продължаваме с Revealing Constructor Pattern-а, който е по-специфичен за JavaScript (и особено за Node.js), тъй като използва функциите като first-class citizens. Идеята на този pattern е да предоставим ограничен достъп до вътрешното състояние на обекта само по време на неговото създаване – тоест, да "разкрием" (reveal-нем) част от private данните за еднократна инициализация. След това този достъп се губи и обектът става напълно капсулиран. Това се постига чрез подаване на executor функция в конструктора. Най-добрият пример за този pattern са promises:
+```js
+const myPromise = new Promise((resolve, reject) => {
+  setTimeout(() => {
+    resolve("Done!");
+  }, 1000);
+});
+```
+Както знаем ние подаваме "executor" функция, когато създаваме нов promise, на тази функция се дава достъп до resole & reject callbacks, чрез които се достъпва internal state-a на promise-a, тоест promise status-a. Ние тук можем да специфицираме, когато статуса да се промени или при какви условия, веднъж щом сме създали promise-a, ние можем само да наблюдаваме промяната. Друг пример:
+```js
+class SecureVault {
+	#secret;
+	constructor(initializer) {
+		const initSecret = (value) => {
+			this.#secret = value;
+		}
+		
+		initializer(initSecret);
+		Object.freeze(this);
+	}
+	getSecret() {
+		return this.#secret;
+	}
+}
+
+const vault = new SecureVault(initSecret => {
+	const user = authenticate();
+	initSecret(user.secret);
+});
+```
+В този пример SecureVault използва Revealing Constructor Pattern, за да даде временен достъп до `#secret` само чрез `initSecret`. Така бихме използвали класа, когато стойността не е просто стринг, а е резултат от логика, като аутентикация. След изпълнение на конструктора `#secret` е записан, достъпът до `initSecret` е изчезнал, обектът е замразен `Object.freeze(this)`, т.е. immutable.
+
+Следващият pattern e Singleton-а, това е един от най-известните pattern-и и се използва за да осигурим една единствена инстанция на клас, към която имаме глобален достъп из цялата апликация. Използваме този pattern за да споделяме и предизползваме данни и/или ресурси, които са консистентни навсякъде. Най-класическият пример е обект за база данни
+```js
+class Database {
+	constructor(dbName, connectionDetails) {
+		this.connection = this.connect(connectionDetails)
+	}
+	connect(connectionDetails) {
+		// Connect
+	}
+	query(sql) {
+		// Some query
+	}
+}
+
+export const db = new Database('mydb', {
+	url: 'localhost:3000', username: 'user', password: 'password'
+});
+```
+```js
+import { db } from './database'
+db.query("SELECT * FROM users");
+```
+Където и да импортирам инстанцията, тя ще е една и съща, като интересното е че тук се възползваме от модулната система на Node и където и да импортнем инстанцията ние ще я вземем от кеша на модулната система, след първото импортване. Този pattern трябва да се прилага внимателно, много лесно базата данни може да се превърне в глобална променлива и да създаде tight dependency и така да направи апликацията ни по-малко модулярна и съответно по-трудна за поддръжда, тестване и т.н. Singleton-ите се използват често в Node.js, например `process` обекта е singleton.
+
+Последният pattern, който ще разгледаме е Dependency Injection, при него идеята е нужните dependencies на един клас да се подават или инжектират от външен изочник наречен "инжектор" при инстанцииране, вместо да се създават от самият него. Целта е да се получи decoupling на компонентите като така се създава по-добра модулярност и възможност за адаптация. Най-добрият пример за използването на DI е при тестване, например:
+```js
+export default class BlogService {
+	constructor(db) {
+		this.db = db;
+	}
+	async getAllPosts() {
+		return this.db.query("SELECT * FROM posts");
+	}
+}
+```
+```js
+import BlogService from "./blogService"
+import { db } from "./database"
+import { mockDb } from "./mocks"
+
+const blog = new BlogService(db);
+const testBlog = new BlogService(mockDb);
+```
+В този пример базата данни на първият блог е реална и би се използвала в production, а на вторият е инжектирана mock база данни, с която можем да тестваме. В случая инжекторът е файлна, който инстанциира блоговете. Както виждаме този pattern е много полезен за decoupling, тестване, също така ни дава информация за нужните dependencies, чрез signature-a на конструстора. Проблемите, които създава са свързани с повишаване на комплексността на програмата.

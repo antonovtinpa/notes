@@ -1,0 +1,208 @@
+---
+title: Chapter 9. Behavioral Design Patterns
+sidebar_position: 9
+---
+
+Разглеждаме Behavioral Design Patterns, които се фокусират над комуникацията и интеракцията между обектите в нашата програма. Те ни дават подходи за създаване на по-адаптивна и по-гъвкава апликация, където отедлните модули могат да се преизползват по интуитивен начин. Пример за Behavioral Design Pattern е Observer Pattern-a, който вече разгледахме в предишни глави.
+
+Започваме със Strategy pattern-a. Той се състои от два компонента - context & strategy. Context- a е обекта, който имплементира основните функционалности и "притежава" стратегия. Стратегията е друг обект, който имплементира функционалностите, които се променят. Всяка стратегия трябва да има еднакъв интерфейс с цел констекста да може да я използва подобаващо. Този pattern малко наподобява dependency injection, но има разлика, която се състои в това, че стратегията реално е част от котекста. Пример:
+
+```js
+class PaymentProcessor {
+  constructor(strategy) {
+    this.strategy = strategy;
+  }
+
+  process(amount) {
+    this.strategy.pay(amount);
+  }
+}
+
+class PaypalStrategy {
+  pay(amount) {
+    console.log(`Paid $${amount} using PayPal`);
+  }
+}
+
+class CreditCardStrategy {
+  pay(amount) {
+    console.log(`Paid $${amount} using Credit Card`);
+  }
+}
+
+const processor = new PaymentProcessor(new PaypalStrategy());
+processor.process(50); // Paid $50 using PayPal
+```
+
+Продължаваме със State Pattern-a, който е вариация на Strategy pattern-a, но идеята тук е че контекста сам решава стратегията (state-a), която използва на база internal state-a му. Това означата, че state-a може да се променя in run time. Когато използваме този pattern, контекста трябва да имплементира начин за промяната на state-a. Пример:
+
+```js
+class OffState {
+  pressButton(fan) {
+    console.log("Turning fan to LOW speed.");
+    fan.setState(new LowState());
+  }
+}
+
+class LowState {
+  pressButton(fan) {
+    console.log("Turning fan to HIGH speed.");
+    fan.setState(new HighState());
+  }
+}
+
+class HighState {
+  pressButton(fan) {
+    console.log("Turning fan OFF.");
+    fan.setState(new OffState());
+  }
+}
+
+class Fan {
+  constructor() {
+    this.state = new OffState();
+  }
+
+  setState(state) {
+    this.state = state;
+  }
+
+  pressButton() {
+    this.state.pressButton(this);
+  }
+}
+
+const fan = new Fan();
+
+fan.pressButton(); // Turning fan to LOW speed.
+fan.pressButton(); // Turning fan to HIGH speed.
+fan.pressButton(); // Turning fan OFF.
+```
+
+Следващият design pattern, който разглеждаме е Template Pattern-а. Идеята е създадаем template, чиято структура можем да преизползваме за да създаваме вариации на този клас. Този template се припокрива до голяма степен с концепцията за Abstract class, но тук всъщност имплементираме state-a & behavior-a, но специфичните методи трябва да се override-нат от subclass-овете, в противен случаи би трябвало да хвърлим грешка. Пример:
+
+```js
+class Vehicle {
+  commute() {
+    this.start();
+    this.move();
+    this.stop();
+  }
+
+  start() {
+    throw new Error("Must be implemented by subclass!");
+  }
+
+  stop() {
+    throw new Error("Must be implemented by subclass!");
+  }
+
+  move() {
+    throw new Error("Must be implemented by subclass!");
+  }
+}
+
+class Car extends Vehicle {
+  start() {
+    console.log("Starting engine...");
+  }
+
+  stop() {
+    console.log("Stopping engine...");
+  }
+
+  move() {
+    console.log("Pressing the gas pedal...");
+  }
+}
+```
+
+Продължаваме с Iterator Pattern-а. Това е станард за последфователно травесване на елементите на един обект. В JS Iterator Pattern-а е вграден, чрез итератор прокола и iterable протокола. Дефиницията на итератора е просто обект, който притежава `next()` метод, който връща `{ value, done }`, където value е стойността на елемента в момента, а done e boolean, който дава информация за това дали сме минали през всички елементи. Iterable от своя страна е обект, който притежава метод `[Symbol.iterator]()`, който връща итератор. Когато един обект е iterable в JS, това ни позволява да се възползваме от функционалности като for loop или spread operator-a `...`. Пример за имплементация на iterable обект:
+
+```js
+class Range {
+  constructor(start, end) {
+    this.start = start;
+    this.end = end;
+  }
+
+  [Symbol.iterator]() {
+    let current = this.start;
+    const end = this.end;
+    return {
+      next() {
+        if (current <= end) {
+          return { value: current++, done: false };
+        }
+        return { done: true };
+      },
+    };
+  }
+}
+
+for (const num of new Range(1, 3)) console.log(num);
+```
+
+Тази функционалност може да бъде имплементирана по по-елегантен начин чрез така наречените генератори. Това са специални функции в JS, който имат следният signature `function* ()` и, в който ние използваме `yield` за да паузираме изпълнението на функцията и да предоставим определена стойност, като `yield` може да се използва множество пъти. Генераторът всъщност предоставя итератор, който да ни помага да контролираме изпълнението на функцията. Примерът отгоре може да се престави така:
+
+```js
+function* range(start, end) {
+  for (let i = start; i <= end; i++) yield i;
+}
+for (const num of range(1, 3)) console.log(num);
+```
+
+В JS има много вградени структури, които са iterable, например arrays, maps, sets, strings, също така stream-овете имплеметират async iterator-и, чрез които можем да консумирам потоци с `for await`.
+
+Следващият patter e Middleware Pattern-a, който всъщност е много известен, предимно заради Express и други web frameworks, които организират операциите си чрез последователност или чейн от стъпки. Идеята е всяка стъпка да приема някакъв инпут от предишната да осъществява точно определена дейност и да предава контрола на следващата ако има такава. По принцип в express middleware-a приема `(req, res, next)`, всяка стъпка си изпълнява задължението и преценява кога или дали да извика `next()` за да даде контрол на следващата стъпка в middleware-a. Пример:
+
+```js
+const app = require("express")();
+
+app.use((req, res, next) => {
+  console.log("Request received:", req.url);
+  next();
+});
+
+app.use((req, res, next) => {
+  if (!authenticated()) return res.status(401).send("Unauthorized");
+  next();
+});
+
+app.use((req, res) => {
+  res.send("Hello World");
+});
+```
+
+Ето по този начин щом получим една заявка ние можем да имаме няколко стъпки през, която тя трябва да мине. Трябва да имаме предвид, че един middleware може да се преизползва на много места, което е едно от предимствата на pattern-a.
+
+Последният pattern, който разглеждаме е Command Pattern-а. Неговата цел е да отдели дадена операция, като я обгръща в самостоятелен обект. Това позволява създаването на заявки като обекти, които могат да бъдат лесно наблюдавани и roll back-вани. Имаме няколко основни компонента - Command e обекта, който имплементира действието, по принцип има execute & undo методи. Receiver е обектът, върхъ който се извършва действието. Invoker е обект, който извиква командата. Пример:
+
+```js
+const Counter = { value: 0 };
+
+function createIncrementCmd(amount) {
+  let previous = null;
+
+  return {
+    execute() {
+      previous = Counter.value;
+      Counter.value += amount;
+      console.log(`Counter is now ${Counter.value}`);
+    },
+    undo() {
+      if (previous !== null) {
+        Counter.value = previous;
+        console.log(`Undo: counter back to ${Counter.value}`);
+      }
+    },
+  };
+}
+
+const inc5 = createIncrementCmd(5);
+const inc3 = createIncrementCmd(3);
+inc5.execute(); // 5
+inc3.execute(); // 8
+inc3.undo(); // 5
+inc5.undo(); // 0
+```
