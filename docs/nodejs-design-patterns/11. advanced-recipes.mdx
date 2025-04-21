@@ -1,0 +1,198 @@
+---
+title: Chapter 11. Advanced Recipes
+sidebar_position: 11
+---
+
+Към този момент сме разгледали доста design pattern-и и добри практики. В тази глава прилагаме голяма част от наученото към този момент в практически примери. Имаме няколко установени решения на често срещани проблеми в истинския живот. Разглеждаме как да се справим с асинхронни компоненти, как да оптимизираме асинхронни операции чрез batching & caching, разглеждаме как се прекъсват асънхронни операции и как да изпълнявата CPU heavy операции по най-ефективният начин.
+
+Започваме с асинхронните компоненти. Какво имаме предвид когато кажем асинхронене компонент? Дори и самият компонент да има и синхронно държание ако за да бъде инициализиран се изисква някаква форма на асинхронна операция, като зареждане на кофигурация или да се установи някаква връзка чрез мрежата, то тогава този компонент може да се счита за асинхронен поне за нашите цели в момента. Това означава, че ние може да окажем в ситуация, където имаме достъп до методите на компонента, но самият компонент не е готов да извършва каквито и да е операции. Решението, което ни се предлага е компонента да има собствена опашка, която да приема и пази операции, докато самият компонент не е готов. Пример:
+
+```js
+class Database extends EventEmitter {
+  constructor() {
+    super();
+    this.connected = false;
+    this.queue = [];
+  }
+
+  query(sql) {
+    if (!this.connected) {
+      return new Promise((resolve, reject) => {
+        this.queue.push(() => {
+          this.query(sql).then(resolve).catch(reject);
+        });
+      });
+    }
+
+    const res = "Result of the query";
+    return Promise.resolve(res);
+  }
+
+  connect() {
+    setTimeout(() => {
+      this.connected = true;
+      this.emit("connected");
+
+      this.queue.forEach((op) => op());
+      this.queue = [];
+    }, 500);
+  }
+}
+
+const db = new Database();
+db.query("SELECT * FROM users");
+db.query("SELECT * FROM items");
+
+db.connect();
+```
+
+Използвайки този подход нашата апликация няма нужда да се съобразява с това дали базата е готова или не - директно можем да започнем да я използваме, като идеята е, че ако базата не е готова операциите просто ще са в "pending" state, докато не дойде момента да бъдат изпълнени. В примера отгоре `db.query` операциите ще бъдат обработени по точно този начин. В реалният свят библиотеки като Mongoose използват подобни похвати точно за такива цели.
+
+Следващата идея, която ще разгледаме е как да оптимизираме асинхронните си операции чрез batching & caching. Тази техника е полезна когато имаме апликация с много трафик, която трябва да изпълнява една и съща сравнително скъпа операция отново и отново. Batching се използва когато една и съща операция се стартира от няколко различни източника, то в този случаи ние можем да комбинираме тези операции в една, тоест заейки, че резултата от няколкото изпълнения на тази операция ще бъде един и същ ние можем просто да я изпълним веднъж и да върнем резултата обратно към източниците. Caching от друга страна е когато върнем готов резултат от предишно изпълнение на една операция, тоест в някакъв момент преди време сме изпълнили операция и сме запазили резултата, това ни позволява сега просто директно да върнем резултата. Тези две техники често се прилагат заедно, едната ни помага да се справяме с дупликирани заявки, а другата с последователни заявки. Пример:
+
+```js
+class Orders {
+	constructor(){
+		this.running = new Map();
+		this.cache = new Map();
+	}
+
+	totalSales(product){
+		if(this.cache.has(product))
+			return Promise.resolve(this.cache.get(product));
+
+		if(this.running.has(product))
+			return this.running.get(product);
+
+		const promise = this.totalSalesRaw(product);
+		this.running.set(product, promise);
+
+		try{
+			const result = await promise;
+			this.cache.set(product, result);
+			return result;
+		} catch(err){
+			console.error("Operation failed: ", err.message)
+		} finally {
+			this.running.delete(product);
+		}
+	}
+
+	totalSalesRaw(product){
+		return new Promise(resolve => {
+		    setTimeout(() => resolve(100), 100);
+		});
+	}
+}
+```
+
+Този пример е семпла версия на концепцията, в реалният свят трябва да предвидим неща като cache invalidation, което не е тривиална задача.
+
+Вече разглеждаме как се прекъсват асинхронни операции. В multithreaded обстановка прекъсването е лесно, просто прекъсваш thread-a. В JS, обаче, не е толкова лесно поради факта, че асинхронните операции се делегират на компоненти от по-ниско ниво. В такъв случвай прекъсването на такава операция трябва да е кооперативно, тоест за да прекъснем една операция ние - тези, които изпълняваме операцията - трябва да работим заедно с компонента, който може да заяви желание за перкъсването и. На практика това се случва чрез периодични проверки на някакъв state - токен или флаг. Тези проверки по принцип е удачно да се правят след всяка важна стъпка в операцията. В момента, в който засечем желание за прекъсване ние хвърляме грешка или reject-ваме promise-a. Пример:
+
+```js
+async function cancelable(token) {
+  const resultA = await asyncOperation("A");
+  if (token.cancel) throw new Error("Operation canceled after A!");
+
+  const resultB = await asyncOperation("B");
+  if (token.cancel) throw new Error("Operation canceled after B!");
+
+  const resultC = await asyncOperation("C");
+  if (token.cancel) throw new Error("Operation canceled after C!");
+
+  return [resultA, resultB, resultC];
+}
+
+function asyncOperation(name) {
+  return new Promise((res) => setTimeout(() => res(`Result ${name}`), 100));
+}
+
+const token = { cancel: false };
+cancelable(token)
+  .then((res) => console.log(res))
+  .catch((err) => console.error(err.message));
+
+setTimeout(() => {
+  token.cancel = true;
+}, 150);
+```
+
+Нещото, което трябва да се запомни е, че в JS прекъсването става ръчно, тоест ние като създатели на операциите трябва да предвидим такъв механизъм, нямаме вградени функции като `Promise.cancel` или нещо от този сорт.
+
+Продължаваме с няколко решения за CPU heavy операции, тоест такива операции, които потенциално могат да блокират thread-a ни и които трябва да се изпълнят от JS, няма как да делегираме. Пример за такава операция би било да итерираме през милиард или трилион елемента в масив. Първият подход е да разделим операцията на batch-ове или chunk-ове като между всеки дял от операцията да предаваме контрол на event loop-а за да обработи I/O операциите, които чакат. Този подход на практика прилагаме, чрез `setImmediate(cb)` или `setTimeout(cb, 0)`. Пример:
+
+```js
+const sum = (n, cb) => {
+  let sum = 0;
+  let i = 1;
+
+  const addChunk = () => {
+    const size = 10000;
+    const end = Math.min(i + size, n + 1);
+
+    while (i < end) sum += i++;
+
+    if (i <= n) setImmediate(addChunk);
+    else cb(sum);
+  };
+  addChunk();
+};
+
+sum(1e7, (res) => console.log("Sum: ", res));
+```
+
+Вторият вариант за справяне с такива операции е чрез child processes. Node.js има собствен `child_process` модул, който ни позволява да spin-ваме/spawn-ваме нови процеси, тоест като вънжни програми. Премествайки тежките операции от main thread-a към child process-a ние го освобождаваме да обработва други операции. Комуникацията между главният процес и child процеса се случва чрез inter-process communication (IPC). Пример:
+
+```js
+// child.js
+process.on("message", (msg) => {
+  const { start, end } = msg;
+  let sum = 0;
+  for (let i = start; i < end; i++) sum += i;
+
+  process.send(sum);
+});
+```
+
+```js
+// main.js
+const { fork } = require("child_process");
+const child = fork("child.js");
+
+child.send({ start: 1, end: 1000000000 });
+
+child.on("message", (msg) => {
+  console.log("Sum: ", msg);
+  child.disconnect();
+});
+```
+
+Използвайки този поход не забавяме тежката операция като я чънкваме, а директно я изпълняваме, главният процес продължава работа както обикновено и след като създаваме нов процес ние се възползваме от повече ядра на процесора. Съответно за сметка на тези възможности ние изразхождаме повече памет и също така сме длъжни да съобразим допълнителното време, което минава когато се разменят съобщения.
+
+Последният начин за справяне съв CPU heavy операции е чрез така наречените Worker Threads. Те се използват отново за изпълняване на паралелни операции, но за разлика от child processes, те споделят памет с главният процес, въпреки, че всеки worker има свой engine & event loop. По принцип worker-ите са по ефективни, когато имаме операции, който са свързани с комуникация с main thread-a, това е отново, защото споделят памет с нея, а не използват IPC. Woker-ите работят по подобен начин, създават се чрез `worker_threads` модула и може да им бъде дават скрипт или функция, която да изпълняват (функцията трябва да сериализирана). Комуникацията се извършва чрез съобщения. Пример:
+
+```js
+const { Worker, isMainThread, parentPort, workerData } =
+  reqire("worker_threads");
+
+if (isMainThread) {
+  const worker = new Worker(__filename, {
+    workerData: {
+      start: 1,
+      end: 1000000000,
+    },
+  });
+
+  worker.on("message", (msg) => console.log("Sum: ", msg));
+} else {
+  const { start, end } = workerData;
+
+  let sum = 0;
+  for (let i = start; i < end; i++) sum += i;
+
+  parentPort.postMessage(sum);
+}
+```
+
+Примерът работи по следният начин - Ако сме в главният thread създаваме worker, който да изпълни операцията и продължаваме с задачите си, ако сме в worker-a изпълняваме операцията и пращаме съобщение на main thread-a с резултата.
